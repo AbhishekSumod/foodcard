@@ -2,71 +2,42 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import requests
 import os
-from fastapi.middleware.cors import CORSMiddleware
-import json
+from dotenv import load_dotenv
 
-# Hugging Face API key from environment variables
+load_dotenv()
 HF_API_KEY = os.getenv("HF_API_KEY")
+MODEL_URL = "https://api-inference.huggingface.co/models/gpt2"  # You can choose a text generation model
 
 app = FastAPI()
-
-# Enable CORS so Flutter can talk to backend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 class MenuRequest(BaseModel):
     text: str
 
 @app.post("/parse_menu")
 async def parse_menu(req: MenuRequest):
-    menu_text = req.text
-    if not menu_text.strip():
-        return {"categories": []}
+    text = req.text
+    headers = {"Authorization": f"Bearer {HF_API_KEY}"}
+    data = {
+        "inputs": f"Extract menu categories, item names, and prices from this text: {text}",
+    }
 
     try:
-        # Hugging Face prompt
-        prompt = f"""
-        Extract all menu items and prices from the text below.
-        Categorize them (drinks, starters, fast food, desserts, etc.).
-        Return ONLY valid JSON like this:
-        {{
-          "categories": [
-            {{
-              "name": "Category Name",
-              "items": [
-                {{"name": "Item Name", "price": "Item Price"}}
-              ]
-            }}
-          ]
-        }}
-
-        Menu text:
-        {menu_text}
-        """
-
-        headers = {"Authorization": f"Bearer {HF_API_KEY}"}
-        payload = {"inputs": prompt}
-
-        response = requests.post(
-            "https://api-inference.huggingface.co/models/google/flan-t5-small",
-            headers=headers,
-            json=payload,
-        )
-
+        response = requests.post(MODEL_URL, headers=headers, json=data, timeout=30)
         result = response.json()
-        text_output = result[0]["generated_text"]
-
-        try:
-            data = json.loads(text_output)
-        except:
-            data = {"categories": []}
-
-        return data
-
+        
+        # You may need to parse result[0]['generated_text'] depending on the model
+        generated_text = result[0].get("generated_text", "") if isinstance(result, list) else ""
+        
+        # Simple mock parser (replace with proper logic or regex)
+        categories = []
+        for line in generated_text.split("\n"):
+            if "$" in line or "₹" in line:  # crude price detection
+                parts = line.split("-")
+                if len(parts) == 2:
+                    name = parts[0].strip()
+                    price = parts[1].strip()
+                    categories.append({"name": "Menu", "items": [{"name": name, "price": price}]})
+        
+        return {"categories": categories}
     except Exception as e:
-        print("❌ HuggingFace error:", e)
-        return {"categories": []}
+        return {"categories": [], "error": str(e)}
