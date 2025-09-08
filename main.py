@@ -3,13 +3,14 @@ from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from groq import Groq
 import json
-import re
 import os
 
-# Initialize FastAPI
-app = FastAPI()
+# -----------------------------------------------------------
+# App Setup
+# -----------------------------------------------------------
+app = FastAPI(title="FoodCard API", version="1.0")
 
-# Enable CORS
+# CORS (for Flutter/web frontend)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,36 +18,53 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Groq client (API key from Render env)
+# -----------------------------------------------------------
+# Groq Client
+# -----------------------------------------------------------
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-# Request body schema
+# -----------------------------------------------------------
+# Models
+# -----------------------------------------------------------
 class MenuRequest(BaseModel):
     text: str
 
+# -----------------------------------------------------------
+# Routes
+# -----------------------------------------------------------
+@app.get("/")
+def root():
+    """Default route (for browser visits)."""
+    return {
+        "message": "✅ FoodCard backend is running.",
+        "endpoints": {
+            "health": "/healthz",
+            "parse menu": "POST /parse_menu",
+            "debug": "POST /debug",
+        },
+    }
+
+
+@app.get("/healthz")
+def health_check():
+    """Render health check endpoint."""
+    return {"status": "ok"}
+
+
 @app.post("/parse_menu")
 async def parse_menu(req: MenuRequest):
+    """Parses raw menu text into structured JSON using Groq."""
     try:
-        # Strict JSON prompt
         prompt = f"""
-        You are a helpful assistant. 
-        Extract the following restaurant menu text into ONLY valid JSON.
-        Do NOT add explanations, comments, or markdown.
-        Just return the JSON array.
+        You are a helpful assistant. Analyze the following restaurant menu text
+        and extract structured JSON with categories and items.
 
-        Example:
+        STRICTLY return valid JSON only in this format:
         [
           {{
-            "name": "Starters",
+            "name": "CategoryName",
             "items": [
-              {{"name": "Paneer Tikka", "price": "120"}},
-              {{"name": "Chicken Kebab", "price": "150"}}
-            ]
-          }},
-          {{
-            "name": "Drinks",
-            "items": [
-              {{"name": "Mango Shake", "price": "80"}}
+              {{"name": "Item Name", "price": "Price"}}
             ]
           }}
         ]
@@ -55,35 +73,46 @@ async def parse_menu(req: MenuRequest):
         {req.text}
         """
 
-        # Groq request
+        # Groq API call
         completion = groq_client.chat.completions.create(
             model="mixtral-8x7b-32768",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0,
-            max_tokens=800,
+            temperature=0.2,
+            max_tokens=500,
         )
 
-        # Raw AI output
+        # Raw response
         ai_response = completion.choices[0].message.content.strip()
-        print("Raw AI response:", ai_response)
 
-        # Try to load JSON directly
+        # Try parsing JSON
         try:
             categories = json.loads(ai_response)
-        except:
-            # Fallback: extract JSON block with regex
-            json_match = re.search(r"\[.*\]", ai_response, re.DOTALL)
-            if json_match:
-                categories = json.loads(json_match.group())
-            else:
-                categories = [{"name": "Menu", "items": [{"name": req.text, "price": ""}]}]
+        except json.JSONDecodeError:
+            # If Groq gives text instead of JSON → fallback
+            categories = [
+                {"name": "Menu", "items": [{"name": req.text, "price": ""}]}
+            ]
 
         return {"categories": categories}
 
     except Exception as e:
         return {"categories": [], "error": str(e)}
 
-# Health check
-@app.get("/healthz")
-def health_check():
-    return {"status": "ok"}
+
+@app.post("/debug")
+async def debug_groq(req: MenuRequest):
+    """Returns raw Groq output (for debugging)."""
+    try:
+        prompt = f"Extract menu items as JSON: {req.text}"
+
+        completion = groq_client.chat.completions.create(
+            model="mixtral-8x7b-32768",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=500,
+        )
+
+        return {"raw": completion.choices[0].message.content}
+
+    except Exception as e:
+        return {"raw": "", "error": str(e)}
