@@ -1,15 +1,13 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-import os
-import requests
 from fastapi.middleware.cors import CORSMiddleware
+from groq import Groq
+import json
 
-# Load environment variable
-HF_API_KEY = os.getenv("HF_API_KEY")
-
+# Initialize FastAPI
 app = FastAPI()
 
-# Allow CORS for Flutter
+# Enable CORS (for Flutter)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,33 +15,60 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Groq client
+groq_client = Groq(api_key="your_groq_api_key_here")
+
+# Request body schema
 class MenuRequest(BaseModel):
     text: str
 
 @app.post("/parse_menu")
 async def parse_menu(req: MenuRequest):
-    """
-    Send extracted text to Hugging Face model and return structured menu
-    """
-    HF_MODEL = "flax-community/text2json"  # e.g., a text2json model
-    headers = {"Authorization": f"Bearer {HF_API_KEY}"}
-    payload = {"inputs": req.text}
-
     try:
-        response = requests.post(
-            f"https://api-inference.huggingface.co/models/{HF_MODEL}",
-            headers=headers,
-            json=payload,
-            timeout=30
+        # Prompt for Groq
+        prompt = f"""
+        You are a helpful assistant. Analyze the following restaurant menu text
+        and extract structured JSON with categories and items.
+
+        Example format:
+        [
+          {{
+            "name": "Starters",
+            "items": [
+              {{"name": "Paneer Tikka", "price": "120"}},
+              {{"name": "Chicken Kebab", "price": "150"}}
+            ]
+          }},
+          {{
+            "name": "Drinks",
+            "items": [
+              {{"name": "Mango Shake", "price": "80"}}
+            ]
+          }}
+        ]
+
+        Menu text:
+        {req.text}
+        """
+
+        # Call Groq API
+        completion = groq_client.chat.completions.create(
+            model="mixtral-8x7b-32768",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=500,
         )
-        response.raise_for_status()
-        data = response.json()
-        # Hugging Face model might return string JSON, so parse it
-        import json
+
+        # Extract AI response
+        ai_response = completion.choices[0].message.content
+
+        # Try parsing JSON
         try:
-            menu_data = json.loads(data.get("generated_text", "{}"))
+            categories = json.loads(ai_response)
         except:
-            menu_data = {"categories": []}
-        return menu_data
+            categories = [{"name": "Menu", "items": [{"name": req.text, "price": ""}]}]
+
+        return {"categories": categories}
+
     except Exception as e:
         return {"categories": [], "error": str(e)}
