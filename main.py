@@ -9,7 +9,7 @@ import os
 # Initialize FastAPI
 app = FastAPI()
 
-# Enable CORS (for Flutter or web client)
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,7 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Groq client (read API key from environment variable)
+# Groq client (API key from Render env)
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 # Request body schema
@@ -27,12 +27,14 @@ class MenuRequest(BaseModel):
 @app.post("/parse_menu")
 async def parse_menu(req: MenuRequest):
     try:
-        # Prompt for Groq
+        # Strict JSON prompt
         prompt = f"""
-        You are a helpful assistant. Analyze the following restaurant menu text
-        and extract structured JSON with categories and items.
+        You are a helpful assistant. 
+        Extract the following restaurant menu text into ONLY valid JSON.
+        Do NOT add explanations, comments, or markdown.
+        Just return the JSON array.
 
-        Example format:
+        Example:
         [
           {{
             "name": "Starters",
@@ -53,36 +55,35 @@ async def parse_menu(req: MenuRequest):
         {req.text}
         """
 
-        # Call Groq API
+        # Groq request
         completion = groq_client.chat.completions.create(
             model="mixtral-8x7b-32768",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            max_tokens=500,
+            temperature=0,
+            max_tokens=800,
         )
 
-        # Extract AI response
+        # Raw AI output
         ai_response = completion.choices[0].message.content.strip()
         print("Raw AI response:", ai_response)
 
-        # Try to extract JSON block from the response
-        json_match = re.search(r"\[.*\]", ai_response, re.DOTALL)
-
+        # Try to load JSON directly
         try:
+            categories = json.loads(ai_response)
+        except:
+            # Fallback: extract JSON block with regex
+            json_match = re.search(r"\[.*\]", ai_response, re.DOTALL)
             if json_match:
                 categories = json.loads(json_match.group())
             else:
-                raise ValueError("No JSON found in response")
-        except Exception as parse_err:
-            print("Parse error:", parse_err)
-            categories = [{"name": "Menu", "items": [{"name": req.text, "price": ""}]}]
+                categories = [{"name": "Menu", "items": [{"name": req.text, "price": ""}]}]
 
         return {"categories": categories}
 
     except Exception as e:
         return {"categories": [], "error": str(e)}
 
-# Health check endpoint (for Render)
+# Health check
 @app.get("/healthz")
 def health_check():
     return {"status": "ok"}
