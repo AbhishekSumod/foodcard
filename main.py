@@ -1,14 +1,14 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
-import openai
 import os
-from dotenv import load_dotenv
+import requests
 import json
+from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
+HF_API_KEY = os.getenv("HF_API_KEY")
 
 # Initialize FastAPI
 app = FastAPI()
@@ -31,9 +31,9 @@ async def root():
 class MenuText(BaseModel):
     text: str
 
-# ----------------- Menu Parser using OpenAI -----------------
+# ----------------- Menu Parser using Hugging Face -----------------
 @app.post("/parse_menu")
-async def parse_menu_ai(data: MenuText):
+async def parse_menu_hf(data: MenuText):
     prompt = f"""
 You are an AI menu parser. Analyze the following restaurant menu text.
 Return a JSON array of categories. Each category must have a 'name' and an 'items' array.
@@ -61,35 +61,36 @@ Menu Text:
 """
 
     try:
-        response = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0
+        headers = {
+            "Authorization": f"Bearer {HF_API_KEY}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "inputs": prompt,
+            "parameters": {"max_new_tokens": 500},
+        }
+
+        response = requests.post(
+            "https://api-inference.huggingface.co/models/google/flan-t5-small",
+            headers=headers,
+            json=payload,
+            timeout=30
         )
 
-        content = response.choices[0].message["content"]
+        result = response.json()
 
-        # Try to parse AI response as JSON
+        # Hugging Face returns text in 'generated_text'
+        text_output = result[0]["generated_text"] if isinstance(result, list) else str(result)
+
+        # Try to parse as JSON
         try:
-            categories = json.loads(content)
-            return {"categories": categories}
+            categories = json.loads(text_output)
         except Exception as e:
-            return {
-                "categories": [],
-                "error": f"Failed to parse AI response as JSON: {str(e)}",
-                "raw_response": content
-            }
+            categories = []
+            return {"categories": [], "error": f"Failed to parse JSON: {str(e)}", "raw_response": text_output}
 
-    except openai.error.RateLimitError as e:
-        return {
-            "categories": [],
-            "error": "OpenAI quota exceeded. Please check your API key or usage.",
-            "details": str(e)
-        }
+        return {"categories": categories}
 
     except Exception as e:
-        return {
-            "categories": [],
-            "error": "An error occurred while calling OpenAI API.",
-            "details": str(e)
-        }
+        return {"categories": [], "error": str(e)}
