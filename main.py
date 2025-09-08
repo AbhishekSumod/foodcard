@@ -3,11 +3,13 @@ from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from groq import Groq
 import json
+import re
+import os
 
 # Initialize FastAPI
 app = FastAPI()
 
-# Enable CORS (for Flutter)
+# Enable CORS (for Flutter or web client)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,8 +17,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Groq client
-groq_client = Groq(api_key="your_groq_api_key_here")
+# Groq client (read API key from environment variable)
+groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 # Request body schema
 class MenuRequest(BaseModel):
@@ -60,15 +62,27 @@ async def parse_menu(req: MenuRequest):
         )
 
         # Extract AI response
-        ai_response = completion.choices[0].message.content
+        ai_response = completion.choices[0].message.content.strip()
+        print("Raw AI response:", ai_response)
 
-        # Try parsing JSON
+        # Try to extract JSON block from the response
+        json_match = re.search(r"\[.*\]", ai_response, re.DOTALL)
+
         try:
-            categories = json.loads(ai_response)
-        except:
+            if json_match:
+                categories = json.loads(json_match.group())
+            else:
+                raise ValueError("No JSON found in response")
+        except Exception as parse_err:
+            print("Parse error:", parse_err)
             categories = [{"name": "Menu", "items": [{"name": req.text, "price": ""}]}]
 
         return {"categories": categories}
 
     except Exception as e:
         return {"categories": [], "error": str(e)}
+
+# Health check endpoint (for Render)
+@app.get("/healthz")
+def health_check():
+    return {"status": "ok"}
