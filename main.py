@@ -87,7 +87,8 @@ async def debug(req: MenuRequest):
     try:
         prompt = f"Return the parsed menu from the following text. ONLY return JSON array of categories (no explanation):\n\n{req.text}"
         completion = groq_client.chat.completions.create(
-            model="mixtral-8x7b-32768",
+           model="llama-3.3-70b-versatile",
+
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
             max_tokens=800,
@@ -131,7 +132,8 @@ Menu text:
 
     try:
         completion = groq_client.chat.completions.create(
-            model="mixtral-8x7b-32768",
+           model="llama-3.3-70b-versatile",
+
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
             max_tokens=800,
@@ -185,4 +187,5 @@ Menu text:
     except Exception as ex:
         logger.exception("Error calling Groq")
         return {"categories": [], "error": str(ex), "raw": ""}
+
 
