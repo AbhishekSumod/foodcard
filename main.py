@@ -1,10 +1,10 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 import openai
 import os
 from dotenv import load_dotenv
-from fastapi.middleware.cors import CORSMiddleware
-import re
+import json
 
 # Load environment variables
 load_dotenv()
@@ -13,7 +13,7 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 # Initialize FastAPI
 app = FastAPI()
 
-# Allow Flutter (mobile/web) to connect
+# Allow Flutter app to connect
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -22,51 +22,57 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ----------------- Chat Endpoint -----------------
-class ChatRequest(BaseModel):
-    message: str
-
-@app.post("/chat")
-async def chat(req: ChatRequest):
-    try:
-        response = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": req.message}],
-        )
-        return {"reply": response.choices[0].message["content"]}
-    except Exception as e:
-        return {"error": str(e)}
-
-# ----------------- Menu Parser Endpoint -----------------
+# ----------------- MenuText Schema -----------------
 class MenuText(BaseModel):
     text: str
 
-CATEGORY_KEYWORDS = {
-    "veg": ["veg", "paneer"],
-    "non veg": ["chicken", "mutton", "fish", "egg"],
-    "drinks": ["lassi", "juice", "shake", "soda", "drink", "mocktail", "cocktail"],
-    "biryani": ["biryani"],
-    "starters": ["starter", "tandoor", "appetizer"],
-    "main course": ["curry", "dal", "rice", "naan", "roti"]
-}
-
+# ----------------- Menu Parser using OpenAI -----------------
 @app.post("/parse_menu")
-async def parse_menu(data: MenuText):
-    lines = data.text.split("\n")
-    categories = []
+async def parse_menu_ai(data: MenuText):
+    prompt = f"""
+You are an AI menu parser. Analyze the following restaurant menu text.
+Return a JSON array of categories. Each category must have a 'name' and an 'items' array.
+Each item must have 'name' and 'price' fields.
 
-    for cat_name, keywords in CATEGORY_KEYWORDS.items():
-        items = []
-        for line in lines:
-            if any(kw.lower() in line.lower() for kw in keywords):
-                match = re.search(r"(.*?)(₹?\$?\d+)", line)
-                if match:
-                    item_name = match.group(1).strip()
-                    price = match.group(2).strip()
-                else:
-                    item_name, price = line.strip(), ""
-                items.append({"name": item_name, "price": price})
-        if items:
-            categories.append({"name": cat_name, "items": items})
+Format example:
+[
+  {{
+    "name": "Drinks",
+    "items": [
+      {{"name": "Lemon Soda", "price": "$2"}},
+      {{"name": "Mango Shake", "price": "$3"}}
+    ]
+  }},
+  {{
+    "name": "Fast Food",
+    "items": [
+      {{"name": "Cheese Burger", "price": "$5"}}
+    ]
+  }}
+]
 
-    return {"categories": categories}
+Menu Text:
+{data.text}
+"""
+
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0
+        )
+
+        content = response.choices[0].message["content"]
+
+        # Try to parse AI response as JSON
+        try:
+            categories = json.loads(content)
+        except Exception as e:
+            print("❌ JSON parsing failed:", e)
+            categories = []
+
+        return {"categories": categories}
+
+    except Exception as e:
+        print("❌ OpenAI error:", e)
+        return {"categories": []}
