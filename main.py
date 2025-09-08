@@ -1,66 +1,48 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
 import os
 import requests
 import json
-from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 HF_API_KEY = os.getenv("HF_API_KEY")
 
-# Initialize FastAPI
 app = FastAPI()
 
-# Allow Flutter app to connect
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ----------------- Root route -----------------
-@app.get("/")
-async def root():
-    return {"message": "Menu Parser API is running!"}
-
-# ----------------- MenuText Schema -----------------
-class MenuText(BaseModel):
+# Request body
+class MenuRequest(BaseModel):
     text: str
 
-# ----------------- Menu Parser using Hugging Face -----------------
+# Test GET route
+@app.get("/")
+def home():
+    return {"message": "Backend is live!"}
+
+# Parse menu POST route
 @app.post("/parse_menu")
-async def parse_menu_hf(data: MenuText):
-    prompt = f"""
-You are an AI menu parser. Analyze the following restaurant menu text.
-Return a JSON array of categories. Each category must have a 'name' and an 'items' array.
-Each item must have 'name' and 'price' fields.
-
-Format example:
-[
-  {{
-    "name": "Drinks",
-    "items": [
-      {{"name": "Lemon Soda", "price": "$2"}},
-      {{"name": "Mango Shake", "price": "$3"}}
-    ]
-  }},
-  {{
-    "name": "Fast Food",
-    "items": [
-      {{"name": "Cheese Burger", "price": "$5"}}
-    ]
-  }}
-]
-
-Menu Text:
-{data.text}
-"""
-
+async def parse_menu(req: MenuRequest):
     try:
+        prompt = f"""
+        You are an assistant that converts raw restaurant menu text into structured JSON.
+        Input text:
+        {req.text}
+
+        Return a JSON object with this structure:
+
+        {{
+            "categories": [
+                {{
+                    "name": "Category Name",
+                    "items": [
+                        {{"name": "Item Name", "price": "Item Price"}}
+                    ]
+                }}
+            ]
+        }}
+        """
+        
         headers = {
             "Authorization": f"Bearer {HF_API_KEY}",
             "Content-Type": "application/json"
@@ -74,23 +56,22 @@ Menu Text:
         response = requests.post(
             "https://api-inference.huggingface.co/models/google/flan-t5-small",
             headers=headers,
-            json=payload,
-            timeout=30
+            data=json.dumps(payload)
         )
 
-        result = response.json()
+        if response.status_code != 200:
+            return {"error": f"Hugging Face API error: {response.text}"}
 
-        # Hugging Face returns text in 'generated_text'
-        text_output = result[0]["generated_text"] if isinstance(result, list) else str(result)
+        output_text = response.json().get("generated_text", "")
 
-        # Try to parse as JSON
+        # Ensure valid JSON
         try:
-            categories = json.loads(text_output)
-        except Exception as e:
-            categories = []
-            return {"categories": [], "error": f"Failed to parse JSON: {str(e)}", "raw_response": text_output}
+            menu_json = json.loads(output_text)
+        except:
+            # If parsing fails, return a fallback empty menu
+            menu_json = {"categories": []}
 
-        return {"categories": categories}
+        return menu_json
 
     except Exception as e:
-        return {"categories": [], "error": str(e)}
+        return {"error": str(e)}
