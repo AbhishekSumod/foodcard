@@ -72,12 +72,24 @@ Menu Text:
         # Try to parse AI response as JSON
         try:
             categories = json.loads(content)
+            return {"categories": categories}
         except Exception as e:
-            print("❌ JSON parsing failed:", e)
-            categories = []
+            return {
+                "categories": [],
+                "error": f"Failed to parse AI response as JSON: {str(e)}",
+                "raw_response": content
+            }
 
-        return {"categories": categories}
+    except openai.error.RateLimitError as e:
+        return {
+            "categories": [],
+            "error": "OpenAI quota exceeded. Please check your API key or usage.",
+            "details": str(e)
+        }
 
     except Exception as e:
-        print("❌ OpenAI error:", e)
-        return {"categories": []}
+        return {
+            "categories": [],
+            "error": "An error occurred while calling OpenAI API.",
+            "details": str(e)
+        }
