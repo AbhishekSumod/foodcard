@@ -22,6 +22,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ----------------- Root route -----------------
+@app.get("/")
+async def root():
+    return {"message": "Menu Parser API is running!"}
+
 # ----------------- MenuText Schema -----------------
 class MenuText(BaseModel):
     text: str
